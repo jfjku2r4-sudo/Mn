@@ -2,6 +2,7 @@ import os
 import re
 import glob
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,6 +29,65 @@ st.markdown("""
 
 st.write("")
 st.info("استخدم الموقع لتنزيل الفيديوهات التي تملكها أو لديك إذن بتنزيلها. لا يدعم تجاوز DRM أو الفيديوهات الخاصة أو قيود تسجيل الدخول.")
+
+
+def is_youtube_url(value: str) -> bool:
+    host = (urlparse(value.strip()).hostname or "").lower()
+    return host == "youtu.be" or host.endswith("youtube.com")
+
+
+@st.cache_resource(show_spinner=False)
+def setup_youtube_po_token_provider():
+    """
+    Best-effort first-run setup for the bgutil PO Token provider.
+    Installs Deno and the provider's script backend in the Streamlit container.
+    """
+    home = Path.home()
+    deno_home = home / ".deno"
+    deno_bin = deno_home / "bin"
+    deno_path = deno_bin / "deno"
+    repo_dir = home / "bgutil-ytdlp-pot-provider"
+    env = os.environ.copy()
+    env["DENO_INSTALL"] = str(deno_home)
+    env["PATH"] = f"{deno_bin}:{env.get('PATH', '')}"
+
+    try:
+        if not deno_path.exists():
+            subprocess.run(
+                ["bash", "-lc", "curl -fsSL https://deno.land/install.sh | sh"],
+                check=True, capture_output=True, text=True, timeout=240, env=env
+            )
+        if not deno_path.exists():
+            return {"ok": False, "reason": "Deno was not installed by the official installer."}
+
+        if not repo_dir.exists():
+            subprocess.run(
+                [
+                    "git", "clone", "--depth", "1", "--single-branch",
+                    "--branch", "2.0.2",
+                    "https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git",
+                    str(repo_dir),
+                ],
+                check=True, capture_output=True, text=True, timeout=180, env=env
+            )
+
+        server_dir = repo_dir / "server"
+        if not (server_dir / "node_modules").exists():
+            subprocess.run(
+                [str(deno_path), "install", "--allow-scripts=npm:canvas", "--frozen"],
+                cwd=str(server_dir), check=True, capture_output=True,
+                text=True, timeout=360, env=env
+            )
+
+        # Make Deno visible to yt-dlp and its PO Token provider subprocess.
+        os.environ["DENO_INSTALL"] = str(deno_home)
+        os.environ["PATH"] = env["PATH"]
+        return {"ok": True, "reason": "bgutil PO Token provider is prepared."}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "reason": "انتهت مهلة إعداد Deno أو موفّر PO Token. أعد المحاولة بعد قليل."}
+    except Exception as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        return {"ok": False, "reason": str(detail)[-1800:]}
 
 def valid_url(value: str) -> bool:
     try:
@@ -60,6 +120,16 @@ if analyze:
         with st.spinner("جارٍ تحليل الرابط واستخراج المعلومات..."):
             try:
                 opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "skip_download": True}
+                if is_youtube_url(url):
+                    with st.spinner("تهيئة دعم YouTube ورمز PO Token لأول استخدام... قد يستغرق ذلك عدة دقائق."):
+                        pot_setup = setup_youtube_po_token_provider()
+                    st.session_state["youtube_pot_ready"] = bool(pot_setup.get("ok"))
+                    if not pot_setup.get("ok"):
+                        st.warning("تعذر إعداد موفّر PO Token تلقائيًا. سيحاول الموقع التحليل بالطريقة المعتادة. التفاصيل: " + pot_setup.get("reason", "غير متاحة"))
+                    else:
+                        st.success("تم تجهيز دعم YouTube ورمز PO Token.")
+                    opts["js_runtimes"] = {"deno": {}}
+                    opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url.strip(), download=False)
                 st.session_state["video_info"] = info
@@ -145,10 +215,6 @@ if info:
                     "quiet": True,
                     "no_warnings": False,
                     "noplaylist": True,
-                    # Debian's quickjs package provides qjs, used by yt-dlp's QuickJS runtime.
-                    "js_runtimes": {"quickjs": {}},
-                    # The default pip extra installs yt-dlp-ejs; this enables its maintained scripts.
-                    "remote_components": ["ejs:github"],
                     "progress_hooks": [hook],
                     "restrictfilenames": True,
                     "overwrites": True,
@@ -161,6 +227,12 @@ if info:
                     "concurrent_fragment_downloads": 1,
                     "socket_timeout": 30,
                 }
+
+                if is_youtube_url(st.session_state["video_url"]):
+                    # bgutil provider plugin (installed from requirements.txt) supplies fresh
+                    # video-bound PO Tokens for the mweb client when YouTube requires them.
+                    common_opts["js_runtimes"] = {"deno": {}}
+                    common_opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
 
                 attempts = []
                 if mode == "صوت MP3":
@@ -260,7 +332,7 @@ if info:
             message = str(e)
             st.error("تعذر إكمال التحميل بعد تجربة أكثر من طريقة.")
             if "403" in message or "forbidden" in message.lower():
-                st.warning("YouTube رفض طلب ملف الفيديو (HTTP 403). تم تفعيل محلّل JavaScript وتجديد اختيار الصيغ؛ إذا استمر الخطأ فقد تكون عناوين التنزيل محجوبة من عنوان IP الخاص بخادم الاستضافة، ولا يستطيع تغيير الصيغة وحده إصلاح حظر IP.")
+                st.warning("YouTube رفض طلب ملف الفيديو (HTTP 403). أُضيف دعم Deno وموفّر PO Token تلقائيًا. إذا استمر الرفض رغم ظهور رسالة توليد PO Token في السجل، فقد يكون عنوان IP الخاص بخادم Streamlit محظورًا أو يتطلب YouTube تحققًا/تسجيل دخول؛ لا توجد طريقة مضمونة لإصلاح ذلك من داخل الاستضافة المجانية.")
             elif "requested format is not available" in message.lower():
                 st.warning("الصيغة المحددة لم تعد متاحة؛ سيستخدم الإصدار الحالي اختيارًا جديدًا للصيغة حسب الجودة بدل الاعتماد على معرّف قديم.")
             elif "empty" in message.lower():

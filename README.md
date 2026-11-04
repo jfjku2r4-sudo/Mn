@@ -1,24 +1,22 @@
-# Video Downloader AI
+# Video Downloader AI — Streamlit free deployment
 
-موقع Streamlit لتحليل روابط الفيديو وتنزيل المحتوى المسموح بتنزيله.
+Arabic Streamlit app by محمد عبد الله / Mohamed Abdallah.
 
-## التشغيل على الكمبيوتر
-1. ثبّت Python 3.10 أو أحدث.
-2. ثبّت FFmpeg واجعله متاحًا في PATH.
-3. افتح الطرفية داخل المجلد ونفّذ:
-   ```bash
-   pip install -r requirements.txt
-   streamlit run app.py
-   ```
+## Deploy
+Upload `app.py`, `requirements.txt`, and `packages.txt` to GitHub, then deploy `app.py` from Streamlit Community Cloud.
 
-## النشر على Streamlit Community Cloud
-1. ارفع `app.py` و`requirements.txt` و`packages.txt` إلى مستودع GitHub.
-2. أنشئ تطبيقًا جديدًا من Streamlit Community Cloud واختر ملف `app.py`.
-3. ستُثبّت الاستضافة FFmpeg من `packages.txt`.
+## YouTube 403 best-effort support
+The first time a YouTube URL is analyzed, the app attempts to:
+1. Install Deno using Deno's official installer in the app user's home directory.
+2. Clone the `bgutil-ytdlp-pot-provider` 2.0.2 repository.
+3. Install its Deno script dependencies.
+4. Use the installed `bgutil-ytdlp-pot-provider` yt-dlp plugin to request fresh PO Tokens for YouTube's `mweb` client.
 
-## ملاحظات
-- لا يوجد دعم مضمون لكل موقع؛ تعتمد الإتاحة على yt-dlp وتغييرات المواقع.
-- لا يتجاوز التطبيق DRM أو تسجيل الدخول أو إعدادات الخصوصية.
-- لا تضع كلمات مرور أو ملفات تعريف ارتباط في التطبيق.
-- تنزيل الملفات الكبيرة قد يتجاوز حدود الذاكرة أو وقت التنفيذ في الاستضافة المجانية؛ الاستضافة الذاتية أو خادم VPS أنسب للملفات الكبيرة.
-- استخدمه فقط للمحتوى الذي تملكه أو لديك إذن صريح بتنزيله.
+The first YouTube analysis may take several minutes. Other supported sites do not run this setup.
+
+## Important limitations
+- PO Tokens can help with YouTube's token-related 403 responses, but they do not guarantee access.
+- The provider project explicitly notes that PO Tokens do not bypass IP-based login restrictions. Streamlit Community Cloud uses shared cloud infrastructure; if YouTube blocks or challenges that egress IP, the free Streamlit deployment may continue to receive 403.
+- This app does not bypass DRM, private-video restrictions, or login requirements.
+- Download only content you own or are authorized to download.
+- Large files may exceed Streamlit Cloud's resource limits.

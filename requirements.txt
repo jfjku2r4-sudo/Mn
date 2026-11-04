@@ -1,2 +1,3 @@
 streamlit>=1.36.0
 yt-dlp[default,curl-cffi]
+bgutil-ytdlp-pot-provider==2.0.2
