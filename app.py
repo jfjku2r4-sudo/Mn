@@ -133,7 +133,7 @@ def get_cookiefile():
         pass
     return str(path)
 
-YT_CLIENTS = [["mweb"], ["tv"], ["web_safari"], ["android_vr"]]
+YT_CLIENTS = [["tv"], ["android_vr"], ["web_safari"], ["mweb"]]
 
 
 def get_proxy():
@@ -365,9 +365,15 @@ if info:
                         {"format": "best"},
                     ])
 
+                if is_youtube_url(st.session_state["video_url"]):
+                    base_attempts = attempts[:2]
+                    attempts = [{**a, "_client": c} for c in YT_CLIENTS for a in base_attempts]
+
                 result = None
                 attempt_errors = []
                 for attempt_number, attempt_opts in enumerate(attempts, start=1):
+                    attempt_opts = dict(attempt_opts)
+                    client = attempt_opts.pop("_client", None)
                     attempt_dir = Path(temp_dir) / f"attempt_{attempt_number}"
                     attempt_dir.mkdir(parents=True, exist_ok=True)
                     ydl_opts = {
@@ -375,11 +381,13 @@ if info:
                         **attempt_opts,
                         "outtmpl": str(attempt_dir / "%(title).100B.%(ext)s"),
                     }
+                    if client:
+                        ydl_opts["extractor_args"] = {"youtube": {"player_client": client}}
                     if mode == "فيديو" and ffmpeg_available:
                         ydl_opts["merge_output_format"] = "mp4"
 
                     try:
-                        status.write(f"جارٍ تجربة طريقة التحميل {attempt_number} من {len(attempts)}...")
+                        status.write(f"جارٍ تجربة طريقة التحميل {attempt_number} من {len(attempts)}" + (f" (عميل {client[0]})" if client else "") + "...")
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             ydl.download([st.session_state["video_url"]])
 
@@ -402,7 +410,7 @@ if info:
                             break
                         attempt_errors.append(f"المحاولة {attempt_number}: لم ينتج ملف صالح.")
                     except Exception as attempt_error:
-                        attempt_errors.append(f"المحاولة {attempt_number}: {str(attempt_error)[:700]}")
+                        attempt_errors.append(f"المحاولة {attempt_number}" + (f" [{client[0]}]" if client else "") + f": {str(attempt_error)[:300]}")
 
                 if result is None:
                     raise RuntimeError(
