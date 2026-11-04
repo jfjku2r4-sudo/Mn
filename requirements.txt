@@ -1,2 +1,2 @@
 streamlit>=1.36.0
-yt-dlp[default]>=2025.1.15
+yt-dlp[default,curl-cffi]

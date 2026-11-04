@@ -131,7 +131,6 @@ if info:
         status = st.empty()
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
-                output_template = os.path.join(temp_dir, "%(title).100B.%(ext)s")
                 def hook(data):
                     if data.get("status") == "downloading":
                         total = data.get("total_bytes") or data.get("total_bytes_estimate")
@@ -140,48 +139,105 @@ if info:
                             progress.progress(min(int(done * 100 / total), 99))
                         status.write("جارٍ تنزيل الملف...")
                     elif data.get("status") == "finished":
-                        progress.progress(100)
-                        status.write("اكتمل التنزيل، جارٍ تجهيز الملف...")
+                        status.write("اكتمل نقل البيانات، جارٍ تجهيز الملف...")
 
-                ydl_opts = {
-                    "outtmpl": output_template,
+                common_opts = {
                     "quiet": True,
-                    "no_warnings": True,
+                    "no_warnings": False,
                     "noplaylist": True,
                     "progress_hooks": [hook],
                     "restrictfilenames": True,
+                    "overwrites": True,
+                    "continuedl": False,
+                    "nopart": True,
+                    "retries": 10,
+                    "fragment_retries": 10,
+                    "extractor_retries": 5,
+                    "file_access_retries": 5,
+                    "concurrent_fragment_downloads": 1,
+                    "socket_timeout": 30,
                 }
+
+                attempts = []
                 if mode == "صوت MP3":
                     if not ffmpeg_available:
                         raise RuntimeError("FFmpeg غير مثبت على الخادم. أضف ffmpeg إلى packages.txt ثم أعد نشر التطبيق.")
-                    ydl_opts["format"] = "bestaudio/best"
-                    ydl_opts["postprocessors"] = [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
+                    attempts = [{
+                        "format": "bestaudio/best",
+                        "postprocessors": [{
+                            "key": "FFmpegExtractAudio",
+                            "preferredcodec": "mp3",
+                            "preferredquality": "192",
+                        }],
                     }]
                 else:
                     chosen = next((item[2] for item in video_formats if item[1] == selected_format), {})
+                    selected_height = chosen.get("height")
                     selected_has_audio = chosen.get("acodec") not in (None, "none")
+
                     if selected_has_audio:
-                        # A progressive format already contains both audio and video.
-                        ydl_opts["format"] = selected_format
-                    else:
-                        # Prefer an M4A audio stream for MP4 compatibility, then any available audio.
-                        ydl_opts["format"] = f"{selected_format}+bestaudio[ext=m4a]/{selected_format}+bestaudio"
-                    if ffmpeg_available:
+                        attempts.append({"format": selected_format})
+                    elif ffmpeg_available:
+                        attempts.append({"format": f"{selected_format}+bestaudio/{selected_format}"})
+
+                    # Retry with a fresh best-match expression if the selected stream is stale,
+                    # unavailable, or returned an empty response.
+                    if selected_height:
+                        attempts.append({
+                            "format": f"bestvideo[height<={selected_height}]+bestaudio/best[height<={selected_height}]"
+                        })
+                    attempts.extend([
+                        {"format": "bestvideo*+bestaudio/best"},
+                        {"format": "best"},
+                    ])
+
+                result = None
+                attempt_errors = []
+                for attempt_number, attempt_opts in enumerate(attempts, start=1):
+                    attempt_dir = Path(temp_dir) / f"attempt_{attempt_number}"
+                    attempt_dir.mkdir(parents=True, exist_ok=True)
+                    ydl_opts = {
+                        **common_opts,
+                        **attempt_opts,
+                        "outtmpl": str(attempt_dir / "%(title).100B.%(ext)s"),
+                    }
+                    if mode == "فيديو" and ffmpeg_available:
                         ydl_opts["merge_output_format"] = "mp4"
 
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([st.session_state["video_url"]])
+                    try:
+                        status.write(f"جارٍ تجربة طريقة التحميل {attempt_number} من {len(attempts)}...")
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            ydl.download([st.session_state["video_url"]])
 
-                candidates = [p for p in Path(temp_dir).glob("*") if p.is_file() and p.stat().st_size > 0]
-                if not candidates:
-                    raise RuntimeError("لم يتم إنشاء ملف قابل للتنزيل.")
-                # Prefer final MP4/MP3 rather than intermediate fragments.
-                candidates.sort(key=lambda p: (p.suffix.lower() in (".mp4", ".mp3", ".mkv", ".webm"), p.stat().st_size), reverse=True)
-                result = candidates[0]
-                mime = "audio/mpeg" if result.suffix.lower() == ".mp3" else "video/mp4"
+                        # Search recursively and ignore incomplete/temporary files.
+                        candidates = [
+                            f for f in attempt_dir.rglob("*")
+                            if f.is_file()
+                            and f.suffix.lower() not in (".part", ".ytdl", ".tmp")
+                            and f.stat().st_size > 1024
+                        ]
+                        if candidates:
+                            candidates.sort(
+                                key=lambda f: (
+                                    f.suffix.lower() in (".mp4", ".mp3", ".mkv", ".webm", ".m4a"),
+                                    f.stat().st_size
+                                ),
+                                reverse=True
+                            )
+                            result = candidates[0]
+                            break
+                        attempt_errors.append(f"المحاولة {attempt_number}: لم ينتج ملف صالح.")
+                    except Exception as attempt_error:
+                        attempt_errors.append(f"المحاولة {attempt_number}: {str(attempt_error)[:700]}")
+
+                if result is None:
+                    raise RuntimeError(
+                        "فشلت جميع طرق التحميل التلقائية.\\n" + "\\n".join(attempt_errors[-4:])
+                    )
+
+                mime = "audio/mpeg" if result.suffix.lower() == ".mp3" else (
+                    "audio/mp4" if result.suffix.lower() == ".m4a" else "video/mp4"
+                )
                 st.session_state["downloaded_file"] = {
                     "bytes": result.read_bytes(),
                     "name": clean_filename(title) + result.suffix,
@@ -192,15 +248,15 @@ if info:
                 status.success("تم تجهيز الملف بنجاح.")
         except Exception as e:
             message = str(e)
-            st.error("فشل التحميل. راجع السبب أدناه؛ قد يكون الرابط غير متاح أو أن صيغة الفيديو تغيّرت.")
-            if "ffmpeg" in message.lower():
-                st.warning("الحل: تأكد من وجود ffmpeg في packages.txt ثم أعد تشغيل التطبيق من إعدادات الاستضافة.")
-            elif "format" in message.lower() or "requested format" in message.lower():
-                st.warning("جرّب اختيار جودة أخرى؛ بعض الجودات تكون مسارات منفصلة وتتطلب FFmpeg للدمج.")
+            st.error("تعذر إكمال التحميل بعد تجربة أكثر من طريقة.")
+            if "empty" in message.lower():
+                st.warning("YouTube أعاد استجابة فارغة. قد يكون هناك تغيير مؤقت في طريقة تقديم الفيديو؛ حدّث yt-dlp وأعد المحاولة لاحقًا أو جرّب جودة أقل.")
+            elif "ffmpeg" in message.lower():
+                st.warning("تأكد من تثبيت FFmpeg في packages.txt ثم أعد نشر التطبيق.")
             elif "sign in" in message.lower() or "cookies" in message.lower() or "private" in message.lower():
-                st.warning("قد يتطلب الفيديو تسجيل الدخول أو يكون خاصًا. هذا التطبيق لا يتجاوز قيود الخصوصية أو الوصول.")
+                st.warning("قد يتطلب الفيديو تسجيل الدخول أو يكون خاصًا. لا يتجاوز التطبيق قيود الوصول.")
             with st.expander("تفاصيل تقنية للمساعدة في التشخيص", expanded=True):
-                st.code(message[:3000])
+                st.code(message[:4000])
 
 downloaded = st.session_state.get("downloaded_file")
 if downloaded:
