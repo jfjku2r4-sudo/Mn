@@ -21,6 +21,7 @@ st.markdown("""
 <h1>🎬 Video Downloader AI</h1>
 <p>حلّل رابط الفيديو واختر الجودة أو استخرج الصوت</p>
 <div class="small-note">واجهة عربية • تعمل على الهاتف والكمبيوتر</div>
+<p style="margin:12px 0 0; font-size:0.95rem;">تطوير: <strong>محمد عبد الله</strong> · <strong>Mohamed Abdallah</strong></p>
 </div>
 """, unsafe_allow_html=True)
 
