@@ -145,6 +145,10 @@ if info:
                     "quiet": True,
                     "no_warnings": False,
                     "noplaylist": True,
+                    # Debian's quickjs package provides qjs, used by yt-dlp's QuickJS runtime.
+                    "js_runtimes": {"quickjs": {}},
+                    # The default pip extra installs yt-dlp-ejs; this enables its maintained scripts.
+                    "remote_components": ["ejs:github"],
                     "progress_hooks": [hook],
                     "restrictfilenames": True,
                     "overwrites": True,
@@ -175,16 +179,22 @@ if info:
                     selected_height = chosen.get("height")
                     selected_has_audio = chosen.get("acodec") not in (None, "none")
 
-                    if selected_has_audio:
+                    # Prefer fresh format selection by height rather than reusing an old
+                    # direct format URL/ID captured during analysis (often the source of 403s).
+                    if selected_height and ffmpeg_available:
+                        attempts.append({
+                            "format": f"bestvideo[height<={selected_height}]+bestaudio/best[height<={selected_height}]"
+                        })
+                    elif selected_has_audio:
                         attempts.append({"format": selected_format})
                     elif ffmpeg_available:
                         attempts.append({"format": f"{selected_format}+bestaudio/{selected_format}"})
 
                     # Retry with a fresh best-match expression if the selected stream is stale,
                     # unavailable, or returned an empty response.
-                    if selected_height:
+                    if selected_height and not ffmpeg_available:
                         attempts.append({
-                            "format": f"bestvideo[height<={selected_height}]+bestaudio/best[height<={selected_height}]"
+                            "format": f"best[height<={selected_height}]"
                         })
                     attempts.extend([
                         {"format": "bestvideo*+bestaudio/best"},
@@ -249,7 +259,11 @@ if info:
         except Exception as e:
             message = str(e)
             st.error("تعذر إكمال التحميل بعد تجربة أكثر من طريقة.")
-            if "empty" in message.lower():
+            if "403" in message or "forbidden" in message.lower():
+                st.warning("YouTube رفض طلب ملف الفيديو (HTTP 403). تم تفعيل محلّل JavaScript وتجديد اختيار الصيغ؛ إذا استمر الخطأ فقد تكون عناوين التنزيل محجوبة من عنوان IP الخاص بخادم الاستضافة، ولا يستطيع تغيير الصيغة وحده إصلاح حظر IP.")
+            elif "requested format is not available" in message.lower():
+                st.warning("الصيغة المحددة لم تعد متاحة؛ سيستخدم الإصدار الحالي اختيارًا جديدًا للصيغة حسب الجودة بدل الاعتماد على معرّف قديم.")
+            elif "empty" in message.lower():
                 st.warning("YouTube أعاد استجابة فارغة. قد يكون هناك تغيير مؤقت في طريقة تقديم الفيديو؛ حدّث yt-dlp وأعد المحاولة لاحقًا أو جرّب جودة أقل.")
             elif "ffmpeg" in message.lower():
                 st.warning("تأكد من تثبيت FFmpeg في packages.txt ثم أعد نشر التطبيق.")
