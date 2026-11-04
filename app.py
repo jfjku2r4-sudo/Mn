@@ -4,6 +4,7 @@ import glob
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -89,6 +90,49 @@ def setup_youtube_po_token_provider():
         detail = getattr(exc, "stderr", None) or str(exc)
         return {"ok": False, "reason": str(detail)[-1800:]}
 
+
+def normalize_cookies(text: str) -> str:
+    """Make sure a Netscape cookies file is valid (tabs between the 7 fields)."""
+    lines = []
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        if not line.startswith("#") or line.startswith("#HttpOnly_"):
+            parts = line.split(None, 6)
+            if len(parts) == 7:
+                line = "\t".join(parts)
+        lines.append(line)
+    if not lines or not lines[0].startswith("# Netscape HTTP Cookie File"):
+        lines.insert(0, "# Netscape HTTP Cookie File")
+    return "\n".join(lines) + "\n"
+
+
+def get_cookiefile():
+    """
+    Returns a path to a private temp copy of the cookies file, or None.
+    Priority: Streamlit secret YOUTUBE_COOKIES (owner) > file uploaded in this session.
+    """
+    content = None
+    try:
+        content = st.secrets.get("YOUTUBE_COOKIES")
+    except Exception:
+        content = None
+    if not content:
+        up = st.session_state.get("cookies_upload")
+        if up is not None:
+            content = up.getvalue().decode("utf-8", errors="ignore")
+    if not content or not content.strip():
+        return None
+    sid = st.session_state.setdefault("cookie_sid", uuid.uuid4().hex)
+    path = Path(tempfile.gettempdir()) / f"yt_cookies_{sid}.txt"
+    path.write_text(normalize_cookies(content), encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+    return str(path)
+
 def valid_url(value: str) -> bool:
     try:
         parsed = urlparse(value.strip())
@@ -110,6 +154,17 @@ def clean_filename(name):
     name = re.sub(r'[\\/*?:"<>|]', "_", name or "video")
     return name[:100].strip(" .") or "video"
 
+with st.expander("🍪 YouTube يطلب تأكيد أنك لست روبوتًا؟ (ملف الكوكيز)"):
+    st.markdown(
+        "إذا ظهر الخطأ *Sign in to confirm you're not a bot* فارفع ملف `cookies.txt` "
+        "(صيغة Netscape) من حساب YouTube **ثانوي** وليس حسابك الأساسي. "
+        "الملف يُستخدم لهذه الجلسة فقط ولا يُحفظ. "
+        "صاحب التطبيق يمكنه بدلًا من ذلك وضعه في Secrets باسم `YOUTUBE_COOKIES`."
+    )
+    st.file_uploader("ملف cookies.txt", type=["txt"], key="cookies_upload")
+    if get_cookiefile():
+        st.success("تم تفعيل ملف الكوكيز.")
+
 url = st.text_input("🔗 ضع رابط الفيديو هنا", placeholder="https://...")
 analyze = st.button("🔍 تحليل الرابط", type="primary", use_container_width=True)
 
@@ -130,6 +185,9 @@ if analyze:
                         st.success("تم تجهيز دعم YouTube ورمز PO Token.")
                     opts["js_runtimes"] = {"deno": {}}
                     opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
+                    cookiefile = get_cookiefile()
+                    if cookiefile:
+                        opts["cookiefile"] = cookiefile
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(url.strip(), download=False)
                 st.session_state["video_info"] = info
@@ -137,6 +195,8 @@ if analyze:
                 st.session_state.pop("downloaded_file", None)
             except Exception as e:
                 st.error("تعذر تحليل الرابط. قد يكون الموقع غير مدعوم أو يتطلب تسجيل الدخول أو أن الرابط غير متاح.")
+                if "not a bot" in str(e).lower():
+                    st.warning("YouTube يحظر عنوان IP الخاص بخادم Streamlit ويطلب التحقق. الحل: ارفع ملف cookies.txt من الإعداد أعلاه (🍪)، أو شغّل التطبيق على جهازك.")
                 with st.expander("تفاصيل تقنية"):
                     st.code(str(e)[:1800])
 
@@ -233,6 +293,9 @@ if info:
                     # video-bound PO Tokens for the mweb client when YouTube requires them.
                     common_opts["js_runtimes"] = {"deno": {}}
                     common_opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
+                    cookiefile = get_cookiefile()
+                    if cookiefile:
+                        common_opts["cookiefile"] = cookiefile
 
                 attempts = []
                 if mode == "صوت MP3":

@@ -20,3 +20,17 @@ The first YouTube analysis may take several minutes. Other supported sites do no
 - This app does not bypass DRM, private-video restrictions, or login requirements.
 - Download only content you own or are authorized to download.
 - Large files may exceed Streamlit Cloud's resource limits.
+
+## حل خطأ "Sign in to confirm you're not a bot"
+سببه حظر YouTube لعناوين IP الخاصة بالاستضافة السحابية، وموفّر PO Token لا يحلّه. الحل:
+1. افتح نافذة تصفح خاص، سجّل الدخول إلى YouTube بحساب **ثانوي**.
+2. في نفس النافذة افتح `https://www.youtube.com/robots.txt`.
+3. صدّر الكوكيز بإضافة مثل "Get cookies.txt LOCALLY" بصيغة Netscape، ثم أغلق النافذة.
+4. إمّا ارفع الملف من قسم 🍪 داخل التطبيق، أو (للمالك) ضعه في Streamlit → Settings → Secrets:
+```
+YOUTUBE_COOKIES = """
+# Netscape HTTP Cookie File
+...محتوى الملف...
+"""
+```
+الكوكيز تنتهي صلاحيتها؛ جدّدها عند عودة الخطأ. لا ترفع الملف إلى GitHub أبدًا.
