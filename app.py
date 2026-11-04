@@ -133,6 +133,32 @@ def get_cookiefile():
         pass
     return str(path)
 
+YT_CLIENTS = [["mweb"], ["tv"], ["web_safari"], ["android_vr"]]
+
+
+def get_proxy():
+    try:
+        return st.secrets.get("PROXY_URL") or None
+    except Exception:
+        return None
+
+
+def extract_with_fallback(link, opts, youtube):
+    """For YouTube, try several player clients; some skip the bot check on cloud IPs."""
+    if not youtube:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(link, download=False), None
+    last_err = None
+    for client in YT_CLIENTS:
+        o = {**opts, "extractor_args": {"youtube": {"player_client": client}}}
+        try:
+            with yt_dlp.YoutubeDL(o) as ydl:
+                return ydl.extract_info(link, download=False), client
+        except Exception as e:
+            last_err = e
+    raise last_err
+
+
 def valid_url(value: str) -> bool:
     try:
         parsed = urlparse(value.strip())
@@ -184,12 +210,13 @@ if analyze:
                     else:
                         st.success("تم تجهيز دعم YouTube ورمز PO Token.")
                     opts["js_runtimes"] = {"deno": {}}
-                    opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
                     cookiefile = get_cookiefile()
                     if cookiefile:
                         opts["cookiefile"] = cookiefile
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url.strip(), download=False)
+                    if get_proxy():
+                        opts["proxy"] = get_proxy()
+                info, used_client = extract_with_fallback(url.strip(), opts, is_youtube_url(url))
+                st.session_state["yt_client"] = used_client or ["mweb"]
                 st.session_state["video_info"] = info
                 st.session_state["video_url"] = url.strip()
                 st.session_state.pop("downloaded_file", None)
@@ -292,10 +319,12 @@ if info:
                     # bgutil provider plugin (installed from requirements.txt) supplies fresh
                     # video-bound PO Tokens for the mweb client when YouTube requires them.
                     common_opts["js_runtimes"] = {"deno": {}}
-                    common_opts["extractor_args"] = {"youtube": {"player_client": ["mweb"]}}
+                    common_opts["extractor_args"] = {"youtube": {"player_client": st.session_state.get("yt_client", ["mweb"])}}
                     cookiefile = get_cookiefile()
                     if cookiefile:
                         common_opts["cookiefile"] = cookiefile
+                    if get_proxy():
+                        common_opts["proxy"] = get_proxy()
 
                 attempts = []
                 if mode == "صوت MP3":
