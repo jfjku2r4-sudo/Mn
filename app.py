@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import shutil
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -83,8 +84,12 @@ if info:
     formats = info.get("formats") or []
     video_formats = []
     seen = set()
+    ffmpeg_available = shutil.which("ffmpeg") is not None
     for f in formats:
-        if f.get("vcodec") not in (None, "none"):
+        has_video = f.get("vcodec") not in (None, "none")
+        has_audio = f.get("acodec") not in (None, "none")
+        # Without FFmpeg, separate video/audio streams cannot be merged.
+        if has_video and (ffmpeg_available or has_audio):
             height = f.get("height")
             ext = f.get("ext") or "?"
             fid = f.get("format_id")
@@ -115,7 +120,10 @@ if info:
             selected_label = st.selectbox("جودة الفيديو", labels)
             selected_format = next(item[1] for item in video_formats if item[0] == selected_label)
     else:
-        st.caption("سيتم استخراج الصوت وتحويله إلى MP3 باستخدام FFmpeg.")
+        if not ffmpeg_available:
+            st.warning("أداة FFmpeg غير متاحة على الخادم؛ لن يمكن تحويل الصوت إلى MP3. ثبّت FFmpeg من packages.txt ثم أعد نشر التطبيق.")
+        else:
+            st.caption("سيتم استخراج الصوت وتحويله إلى MP3 باستخدام FFmpeg.")
 
     if st.button("🚀 ابدأ التحميل", type="primary", use_container_width=True,
                  disabled=(mode == "فيديو" and not selected_format)):
@@ -144,6 +152,8 @@ if info:
                     "restrictfilenames": True,
                 }
                 if mode == "صوت MP3":
+                    if not ffmpeg_available:
+                        raise RuntimeError("FFmpeg غير مثبت على الخادم. أضف ffmpeg إلى packages.txt ثم أعد نشر التطبيق.")
                     ydl_opts["format"] = "bestaudio/best"
                     ydl_opts["postprocessors"] = [{
                         "key": "FFmpegExtractAudio",
@@ -151,8 +161,16 @@ if info:
                         "preferredquality": "192",
                     }]
                 else:
-                    ydl_opts["format"] = f"{selected_format}+bestaudio/best"
-                    ydl_opts["merge_output_format"] = "mp4"
+                    chosen = next((item[2] for item in video_formats if item[1] == selected_format), {})
+                    selected_has_audio = chosen.get("acodec") not in (None, "none")
+                    if selected_has_audio:
+                        # A progressive format already contains both audio and video.
+                        ydl_opts["format"] = selected_format
+                    else:
+                        # Prefer an M4A audio stream for MP4 compatibility, then any available audio.
+                        ydl_opts["format"] = f"{selected_format}+bestaudio[ext=m4a]/{selected_format}+bestaudio"
+                    if ffmpeg_available:
+                        ydl_opts["merge_output_format"] = "mp4"
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([st.session_state["video_url"]])
@@ -173,9 +191,16 @@ if info:
                 progress.progress(100)
                 status.success("تم تجهيز الملف بنجاح.")
         except Exception as e:
-            st.error("فشل التحميل. تحقق من دعم الموقع للصيغة المطلوبة ومن تثبيت FFmpeg.")
-            with st.expander("تفاصيل تقنية"):
-                st.code(str(e)[:1800])
+            message = str(e)
+            st.error("فشل التحميل. راجع السبب أدناه؛ قد يكون الرابط غير متاح أو أن صيغة الفيديو تغيّرت.")
+            if "ffmpeg" in message.lower():
+                st.warning("الحل: تأكد من وجود ffmpeg في packages.txt ثم أعد تشغيل التطبيق من إعدادات الاستضافة.")
+            elif "format" in message.lower() or "requested format" in message.lower():
+                st.warning("جرّب اختيار جودة أخرى؛ بعض الجودات تكون مسارات منفصلة وتتطلب FFmpeg للدمج.")
+            elif "sign in" in message.lower() or "cookies" in message.lower() or "private" in message.lower():
+                st.warning("قد يتطلب الفيديو تسجيل الدخول أو يكون خاصًا. هذا التطبيق لا يتجاوز قيود الخصوصية أو الوصول.")
+            with st.expander("تفاصيل تقنية للمساعدة في التشخيص", expanded=True):
+                st.code(message[:3000])
 
 downloaded = st.session_state.get("downloaded_file")
 if downloaded:
