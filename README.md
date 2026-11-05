@@ -1,40 +1,24 @@
-# Video Downloader AI — Streamlit free deployment
+# Video Downloader AI
 
-Arabic Streamlit app by محمد عبد الله / Mohamed Abdallah.
+موقع Streamlit لتحليل روابط الفيديو وتنزيل المحتوى المسموح بتنزيله.
 
-## Deploy
-Upload `app.py`, `requirements.txt`, and `packages.txt` to GitHub, then deploy `app.py` from Streamlit Community Cloud.
+## التشغيل على الكمبيوتر
+1. ثبّت Python 3.10 أو أحدث.
+2. ثبّت FFmpeg واجعله متاحًا في PATH.
+3. افتح الطرفية داخل المجلد ونفّذ:
+   ```bash
+   pip install -r requirements.txt
+   streamlit run app.py
+   ```
 
-## YouTube 403 best-effort support
-The first time a YouTube URL is analyzed, the app attempts to:
-1. Install Deno using Deno's official installer in the app user's home directory.
-2. Clone the `bgutil-ytdlp-pot-provider` 2.0.2 repository.
-3. Install its Deno script dependencies.
-4. Use the installed `bgutil-ytdlp-pot-provider` yt-dlp plugin to request fresh PO Tokens for YouTube's `mweb` client.
+## النشر على Streamlit Community Cloud
+1. ارفع `app.py` و`requirements.txt` و`packages.txt` إلى مستودع GitHub.
+2. أنشئ تطبيقًا جديدًا من Streamlit Community Cloud واختر ملف `app.py`.
+3. ستُثبّت الاستضافة FFmpeg من `packages.txt`.
 
-The first YouTube analysis may take several minutes. Other supported sites do not run this setup.
-
-## Important limitations
-- PO Tokens can help with YouTube's token-related 403 responses, but they do not guarantee access.
-- The provider project explicitly notes that PO Tokens do not bypass IP-based login restrictions. Streamlit Community Cloud uses shared cloud infrastructure; if YouTube blocks or challenges that egress IP, the free Streamlit deployment may continue to receive 403.
-- This app does not bypass DRM, private-video restrictions, or login requirements.
-- Download only content you own or are authorized to download.
-- Large files may exceed Streamlit Cloud's resource limits.
-
-## حل خطأ "Sign in to confirm you're not a bot"
-سببه حظر YouTube لعناوين IP الخاصة بالاستضافة السحابية، وموفّر PO Token لا يحلّه. الحل:
-1. افتح نافذة تصفح خاص، سجّل الدخول إلى YouTube بحساب **ثانوي**.
-2. في نفس النافذة افتح `https://www.youtube.com/robots.txt`.
-3. صدّر الكوكيز بإضافة مثل "Get cookies.txt LOCALLY" بصيغة Netscape، ثم أغلق النافذة.
-4. إمّا ارفع الملف من قسم 🍪 داخل التطبيق، أو (للمالك) ضعه في Streamlit → Settings → Secrets:
-```
-YOUTUBE_COOKIES = """
-# Netscape HTTP Cookie File
-...محتوى الملف...
-"""
-```
-الكوكيز تنتهي صلاحيتها؛ جدّدها عند عودة الخطأ. لا ترفع الملف إلى GitHub أبدًا.
-
-## محاولات إضافية داخل الكود
-- يجرّب التطبيق تلقائيًا عدة عملاء YouTube (mweb ثم tv ثم web_safari ثم android_vr) لأن بعضها يتجاوز فحص "لست روبوتًا" أحيانًا.
-- لاستخدام بروكسي سكني مدفوع، أضف في Secrets: `PROXY_URL = "http://user:pass@host:port"`.
+## ملاحظات
+- لا يوجد دعم مضمون لكل موقع؛ تعتمد الإتاحة على yt-dlp وتغييرات المواقع.
+- لا يتجاوز التطبيق DRM أو تسجيل الدخول أو إعدادات الخصوصية.
+- لا تضع كلمات مرور أو ملفات تعريف ارتباط في التطبيق.
+- تنزيل الملفات الكبيرة قد يتجاوز حدود الذاكرة أو وقت التنفيذ في الاستضافة المجانية؛ الاستضافة الذاتية أو خادم VPS أنسب للملفات الكبيرة.
+- استخدمه فقط للمحتوى الذي تملكه أو لديك إذن صريح بتنزيله.
